@@ -4,25 +4,51 @@
 from typing import List
 
 import torch
+from torch import nn
 
 from llama.tokenizer import Tokenizer
 from llama.model import Transformer
 
 
-class LLaMA:
-    def __init__(self, model: Transformer, tokenizer: Tokenizer):
+class TransformerWithDecoding(nn.Module):
+    def __init__(self, model: Transformer, temperature: float, top_p: float):
+        super().__init__()
         self.model = model
+        self.params = model.params
+        self.temperature = temperature
+        self.top_p = top_p
+
+    @torch.inference_mode()
+    def forward(self, tokens: torch.Tensor, prev_pos: int):
+        logits = self.model.forward(tokens, prev_pos)
+        if self.temperature > 0:
+            probs = torch.softmax(logits / self.temperature, dim=-1)
+            next_token = sample_top_p(probs, self.top_p)
+        else:
+            next_token = torch.argmax(logits, dim=-1)
+        next_token = next_token.reshape(-1)
+        return next_token
+
+
+class LLaMA:
+    def __init__(
+        self,
+        model: Transformer,
+        tokenizer: Tokenizer,
+        temperature: float,
+        top_p: float,
+    ):
+        #self.model = model
+        self.model_with_decoding = TransformerWithDecoding(model, temperature, top_p)
         self.tokenizer = tokenizer
 
     def generate(
         self,
         prompts: List[str],
         max_gen_len: int,
-        temperature: float = 0.8,
-        top_p: float = 0.95,
     ) -> List[str]:
         bsz = len(prompts)
-        params = self.model.params
+        params = self.model_with_decoding.params
         assert bsz <= params.max_batch_size, (bsz, params.max_batch_size)
 
         prompt_tokens = [self.tokenizer.encode(x, bos=True, eos=False) for x in prompts]
@@ -39,13 +65,7 @@ class LLaMA:
         start_pos = min_prompt_size
         prev_pos = 0
         for cur_pos in range(start_pos, total_len):
-            logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos)
-            if temperature > 0:
-                probs = torch.softmax(logits / temperature, dim=-1)
-                next_token = sample_top_p(probs, top_p)
-            else:
-                next_token = torch.argmax(logits, dim=-1)
-            next_token = next_token.reshape(-1)
+            next_token = self.model_with_decoding.forward(tokens[:, prev_pos:cur_pos], prev_pos)
             # only replace token if prompt has already been generated
             next_token = torch.where(
                 input_text_mask[:, cur_pos], tokens[:, cur_pos], next_token
