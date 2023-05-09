@@ -30,10 +30,15 @@ def load(
     max_batch_size: int,
 ) -> LLaMA:
     start_time = time.time()
-    checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
-    ckpt_path = checkpoints[0]
     print("Loading")
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
+    if len(checkpoints) > 0:
+        ckpt_path = checkpoints[0]
+        print(f"Use checkpoint file {ckpt_path}")
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+    else:
+        print("Skip loading checkpoint")
+        checkpoint = None
     with open(Path(ckpt_dir) / "params.json", "r") as f:
         params = json.loads(f.read())
 
@@ -45,7 +50,8 @@ def load(
     torch.set_default_tensor_type(torch.FloatTensor)
     model = Transformer(model_args)
     torch.set_default_tensor_type(torch.FloatTensor)
-    model.load_state_dict(checkpoint, strict=False)
+    if checkpoint:
+        model.load_state_dict(checkpoint, strict=False)
     model.eval()
     model = torch.compile(model, backend=backend, fullgraph=True)
 
@@ -55,8 +61,8 @@ def load(
 
 
 def main(
-    ckpt_dir: str,
-    tokenizer_path: str,
+    ckpt_dir: str = '.',
+    tokenizer_path: str = './tokenizer.model',
     temperature: float = 0.8,
     top_p: float = 0.95,
     max_seq_len: int = 512,
